@@ -1,0 +1,99 @@
+#!/bin/bash
+#
+# This script collects the LUNs that has the usage less than the given parameter
+# It requires 2 parameters to run, first is SID, second is percentage
+#
+#
+# Author: Geri
+# Version: 0.1, first working version
+# Date: 2019. 06. 07.
+#
+# The output format is 'tab' delimited
+# Sym   TotalGBs	AllocateGBs	Used_%	UsedGBs StorageGroup(s)
+#
+# One line, one device. If it is in more then one SG, all will be listed
+#
+
+if [ $# -lt 2 ]; then
+        echo "You need to provide the SID number that you want to check, and the percentage"
+        echo "Exiting..."
+        exit
+fi
+
+Debug=false
+
+if [ "$3" == "-debug" ]; then
+	Debug=true
+fi
+
+SID=$1
+PercentLimit=$2
+tempFile="DeviceTempFile"
+noName="noName"
+wrongPool="wrongPool"
+
+if [ $PercentLimit -gt 99 ]; then
+        echo "The percentage you want to collect info about, is greater than 99 ($PercentLimit). Please check!"
+        echo "Exiting..."
+        exit
+fi
+
+PercentCheck=$((PercentLimit+1)) # Make the given parameter the max number included
+
+Pools=`symcfg -sid $SID list -pool | grep RAID | awk '{print $1}'`
+
+echo "Starting with the pools on ${SID}..."
+
+if $Debug; then
+	echo $Pools
+fi
+
+for pool in $Pools; do
+	echo "Working on pool $pool..."
+	# output format: FFE1F         383.1       83.1      300.0   78  .  Enabled
+	symcfg -sid $SID show -pool $pool -thin -gb -detail 2>$wrongPool | awk '/Other Thin Devices/{print $0}' RS="}" | sed '1,12d' | tac | sed '1,3d' | sort -k 5 >$tempFile
+
+	if [ ! -s $tempFile ] ; then
+		echo "The thin pool $pool does not exist, does not have thin device in it, or something is wrong. Going for the next pool..."
+		continue
+	fi
+
+	resultFile="DevUsage__${SID}__${pool}"
+	#resetting the old result file... We put the SID and pool name into the first line, easier in excel
+	printf "${SID}_${pool}\n" > $resultFile
+	#This is the header
+	printf "LUN ID\tDevice Name/Datastore/Mount Point\tTotal [GB]\tAllocated [GB]\tPercent [\x$(printf %x 37)]\tPoolUsed [GB]\tStorage Group I\tStorage Group II\n" >> $resultFile
+
+	while read myLine; do
+		#Read in the values from the line
+
+		dev=`echo $myLine | awk '{print $1}'`
+		total=`echo $myLine | awk '{print $3}'`
+		allocated=`echo $myLine | awk '{print $4}'`
+		percent=`echo $myLine | awk '{print $5}'`
+		poolused=`echo $myLine | awk '{print $6}'`
+		if $Debug; then
+			printf "Pool $pool...\n"
+			printf "Line: $myLine\n"
+			printf "Variables: $dev, $total, $allocated, $percent, $poolused\n"
+		fi
+
+		if [ $percent -lt $PercentCheck ]; then
+			devName=`symdev -sid $SID list -identifier device_name -dev $dev 2>$noName | sed '1,7d' | awk '{print $3}'`
+			if [ -s $noName ]; then
+				devName="TheDevHasNoName!"
+			fi
+			myStorGrps=`symaccess -sid $SID list -dev $dev -type storage -v | grep "Storage Group Name" | awk -F\: '{print $2}' | sed 's/^ //' | sed 's/ /,/'`
+			echo $dev $devName $total $allocated $percent $poolused $myStorGrps | sed 's/ /\t/g' | tee -a $resultFile
+		else
+			echo "I reached the limit \"$PercentLimit\", exiting the while loop!"
+			break
+		fi
+		#done
+	done < $tempFile
+done
+
+#cleaning up
+rm -f $tempFile $noName $wrongPool
+
+mv * \\\\molina.mhc\\shares\\storageadmin\\_Output

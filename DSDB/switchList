@@ -1,0 +1,4 @@
+#SwitchName,ManagementIP
+#SwitchName,ManagementIP
+fcswitch-a,172.16.0.128
+fcswitch-b,172.16.0.129

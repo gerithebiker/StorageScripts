@@ -1,0 +1,16 @@
+#!/bin/bash
+#
+#Quick and dirty script to check fabric switches if there are any configured WWNs not logged on to the switch
+#It prints the result on the screen
+#It is for Cisco
+
+declare -A Switches
+Switches[fc-a]=172.16.1.128
+
+for switch in "${!Switches[@]}"
+do
+	ssh ${Switches[$switch]} "show zoneset active" > ~/${switch}_zoneset
+	echo "Not connected WWNs in switch ${switch}:"
+	grep \: ~/${switch}_zoneset | grep -v \* | sort -u
+	echo ""
+done
