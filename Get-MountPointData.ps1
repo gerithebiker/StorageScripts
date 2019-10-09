@@ -41,16 +41,19 @@ https://www.powershelladmin.com/wiki/PowerShell_Get-MountPointData_Cmdlet
 					1.2	(Geri) 09/18/2019
 						Added the cluster resource to physical server logic
 						Moved the volume selection to select the list before querying the server. Shortens the run-time
+					1.2.1 (Geri) 10/9/2019
+						Changed the cluster checking part to not use name, but check it directly
+
 
 .EXAMPLE
-  Get-MountPointData.ps1 DC01OLTPDBPP026
-	It will query the server DC01OLTPDBPP026, and print out the information to the screen.
+  Get-MountPointData.ps1 MYSERVER01
+	It will query the server MYSERVER01, and print out the information to the screen.
 .EXAMPLE
-  Get-MountPointData.ps1 -Computers DC01OLTPDBPP026,DC01OLTPDBPP023 -SelectDrives H_MP_AGMI
-	It will query the servers DC01OLTPDBPP026 and DC01OLTPDBPP023, and displays the drives that's label contains the string H_MP_AGMI.
+  Get-MountPointData.ps1 -Computers MYSERVER01,MYSERVER02 -SelectDrives HDRV_01
+	It will query the servers MYSERVER01 and MYSERVER02, and displays the drives that's label contains the string H_MP_AGMI.
 .EXAMPLE
-  Get-MountPointData.ps1 -Computers DC01OLTPDBPP026,DC01OLTPDBPP023 -SelectDrives H_MP_AGMI_DB1,H_MP_AGMI_DB2,H_MP_AGMI_DB3 -Progress
-	It will query the servers DC01OLTPDBPP026 and DC01OLTPDBPP023, and displays the drives with the labels H_MP_AGMI_DB1, H_MP_AGMI_DB2, H_MP_AGMI_DB3. It will also show progress report.
+  Get-MountPointData.ps1 -Computers MYSERVER01,MYSERVER02 -SelectDrives HDRV_01,HDRV_02,HDRV_03 -Progress
+	It will query the servers MYSERVER01 and MYSERVER02, and displays the drives with the labels HDRV_01, HDRV_02, HDRV_03. It will also show progress report.
 
 #>
 
@@ -319,7 +322,7 @@ catch {
 	if($Progress){Write-Progress -CurrentOperation "Working on $Computer computer." ("Collecting LUN ID information")}
 	
 	# Now we collect all the LUN IDs from the server, and put them into the powermtOut variable
-	$powermtOut=Invoke-Command -ComputerName $Computer -ScriptBlock {powermt display dev=all} -ErrorVariable PowerMTError
+	$powermtOut=Invoke-Command -ComputerName $Computer -ScriptBlock {powermt display dev=all} -ErrorVariable PowerMTError 2>$null
 	
 	if ($PowerMTError){
 		Write-Host "    + PowerMT Error         : There is no powermt.exe installed on $Computer" -ForegroundColor "red" -BackgroundColor "black"
@@ -345,18 +348,18 @@ catch {
 		$mntPoint | Add-Member -NotePropertyName lunID -NotePropertyValue $tempString[1]
 	} # End of "for loop" to add the LUN IDs
 		
-	for ($i=$Computer.length-1; $i -ne 0; $i--){
-		if (([System.Int32]::TryParse($Computer.substring($i,1), [ref] 0))){
-			continue # When the character is number, we go for the next one
-		} else {
-			if ($Computer.substring($i,1) -eq "C"){ # When we found the first non-number character, we check it
-				Write-Verbose "Cluter resource, checking Physical server name."
-				Get-ClusterGroup -Name $Computer -Cluster $Computer | Select-Object name,cluster,ownernode,state | Format-List # If "C", then it is a cluster role, we need to check the physical server
-			} else {
-				Write-Verbose "Non-clustered server."
-			}
-			break
-		}
+	# Now we check if the "Computer" is part of a cluster. If yes, we print out some info, including the current owner node name
+	# The error is redirected to null, to have a nicer output
+	$NodeName=Get-ClusterGroup -Name $Computer -Cluster $Computer -ErrorVariable notClusterNode 2>$null
+	
+	if ($notClusterNode){
+		$VerboseMessage=$Computer + " is not part of a cluster..."
+		Write-Verbose "$VerboseMessage"
+	} else {
+		"`r`n"
+		$WarningMessage=$Computer + " is member of a cluster, pls use the `"OwnerNode`" name in the Change Request!"
+		Write-Warning  $WarningMessage
+		$NodeName | Select-Object name,cluster,ownernode,state | Format-List
 	}
 	
 	Write-Verbose "And now the result:"
